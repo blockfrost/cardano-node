@@ -1,30 +1,30 @@
-module Cardano.Node.StateRep where
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
+module Cardano.Node.StateRep
+  ( NodeState (..)
+  ) where
+
+import Cardano.Prelude
+import Data.Aeson (FromJSON, ToJSON)
+
+import Cardano.Node.Handlers.Shutdown (ShutdownTrace (..))
+
+type PeerInfoPP = Text     -- The result of 'ppPeer' function.
+type StartupTracePP = Text -- The result of 'ppStartupInfoTrace' function.
+
+-- | The representation of the current state of node.
+--   All node states prior to tracing system going online are effectively invisible.
 data NodeState blk
-  -- All node states prior to tracing system going online are effectively invisible.
-  = NodeTracingOnlineConfiguring    -- <- initTraceDispatcher
-  | NodeConfigCompleteLoadingKernel -- just before Node.run
-  | NodeChainDBOpening (TraceEvent blk)
-  -- TraceOpenEvent              (TraceOpenEvent               blk)
-      -- StartedOpeningDB
-      -- StartedOpeningImmutableDB
-      -- OpenedImmutableDB
-      -- StartedOpeningVolatileDB
-      -- OpenedVolatileDB
-      -- StartedOpeningLgrDB
-  -- TraceLedgerReplayEvent      (LedgerReplayEvent            blk)
-      -- ReplayFromGenesis
-      -- ReplayFromSnapshot
-      -- ReplayedBlock
-  -- TraceOpenEvent              (TraceOpenEvent               blk)
-      -- OpenedLgrDB
-  -- TraceInitChainSelEvent      (TraceInitChainSelEvent       blk)
-      -- StartedInitChainSelection
-      -- InitalChainSelected
-  -- TraceOpenEvent              (TraceOpenEvent               blk)
-      -- OpenedDB
-  | NodeKernelOnlineSyncing         -- just before onKernel in rnNodeKernelHook
-  | NodeSyncing (TraceEvent blk)
-  -- TraceAddBlockEvent          (TraceAddBlockEvent           blk)
-    -- ChainDB.AddedToCurrentChain
-  | NodeShutdownComplete            -- <- finally in handleNodeWithTracers
+  = NodeTracingOnlineConfiguring -- ^ initTraceDispatcher
+  | NodeStartup StartupTracePP
+  | NodePeers [PeerInfoPP]       -- ^ The peers information here is for demonstration only.
+  | NodeShutdown ShutdownTrace
+
+deriving instance Generic (NodeState blk)
+
+instance ToJSON (NodeState blk)
+
+-- Strictly speaking, we mustn't provide 'FromJSON' instance here,
+-- but it will be convenient for acceptor application.
+instance FromJSON (NodeState blk)

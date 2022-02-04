@@ -36,6 +36,7 @@ import           Trace.Forward.Utils.DataPoint (DataPoint)
 
 import           Cardano.Node.Queries (NodeKernelData)
 import           Cardano.Node.Startup
+import           Cardano.Node.StateRep (NodeState (..))
 import           Cardano.Node.TraceConstraints
 import           Cardano.Node.Tracing
 import           "contra-tracer" Control.Tracer (Tracer (..))
@@ -86,6 +87,10 @@ mkDispatchTracers nodeKernel trBase trForward mbTrEKG trDataPoint trConfig enabl
                 trDataPoint
                 (const ["NodeInfo"])
     configureTracers trConfig docNodeInfoTraceEvent [nodeInfoTr]
+
+    nodeStateTr <- mkDataPointTracer
+                trDataPoint
+                (const ["NodeState"])
 
     -- Resource tracer
     resourcesTr <- mkCardanoTracer
@@ -187,11 +192,18 @@ mkDispatchTracers nodeKernel trBase trForward mbTrEKG trDataPoint trConfig enabl
       , nodeToNodeTracers = nodeToNodeTr
       , diffusionTracers = diffusionTr
       , diffusionTracersExtra = diffusionTrExtra
-      , startupTracer = Tracer (traceWith startupTr)
-      , shutdownTracer = Tracer (traceWith shutdownTr)
+      , startupTracer = Tracer $ \x -> do
+                          traceWith startupTr x
+                          traceWith nodeStateTr $ NodeStartup (ppStartupInfoTrace x)
+      , shutdownTracer = Tracer $ \x -> do
+                           traceWith shutdownTr x
+                           traceWith nodeStateTr $ NodeShutdown x
       , nodeInfoTracer = Tracer (traceWith nodeInfoTr)
+      , nodeStateTracer = Tracer (traceWith nodeStateTr)
       , resourcesTracer = Tracer (traceWith resourcesTr)
-      , peersTracer = Tracer (traceWith peersTr)
+      , peersTracer = Tracer $ \x -> do
+                        traceWith peersTr x
+                        traceWith nodeStateTr $ NodePeers (map ppPeer x)
     }
 
 mkConsensusTracers :: forall blk.
