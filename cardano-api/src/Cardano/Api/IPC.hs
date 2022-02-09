@@ -139,20 +139,17 @@ data LocalNodeClientProtocols block point tip tx txerr query m =
          :: Maybe (LocalStateQueryClient   block point query m ())
      }
 
-data LocalChainSyncClient block point tip m where
-  NoLocalChainSyncClient :: LocalChainSyncClient block point tip m
+data LocalChainSyncClient block point tip m =
+    NoLocalChainSyncClient
 
-  LocalChainSyncClientPipelined
-    :: ChainSyncClientPipelined block point tip   m ()
-    -> LocalChainSyncClient block point tip m
+  | LocalChainSyncClientPipelined
+     (ChainSyncClientPipelined block point tip m ())
 
-  LocalChainSyncClient
-    :: ChainSyncClient block point tip m ()
-    -> LocalChainSyncClient block point tip m
+  | LocalChainSyncClient
+     (ChainSyncClient block point tip m ())
 
-  LocalChainSyncChairman
-    :: ChainSyncClient block point tip m ()
-    -> LocalChainSyncClient block point tip m
+  | LocalChainSyncChairman
+     (ChainSyncClient block point tip m ())
 
 -- public, exported
 type LocalNodeClientProtocolsInMode mode =
