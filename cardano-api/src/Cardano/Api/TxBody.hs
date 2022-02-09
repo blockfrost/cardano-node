@@ -119,6 +119,9 @@ module Cardano.Api.TxBody (
     collectTxBodyScriptWitnesses,
     mapTxScriptWitnesses,
 
+    -- * Calculate Plutus script budget
+    calculatePlutusScriptBudget,
+
     -- * Internal conversion functions & types
     toShelleyTxId,
     toShelleyTxIn,
@@ -211,10 +214,13 @@ import qualified Cardano.Ledger.Alonzo.Language as Alonzo
 import qualified Cardano.Ledger.Alonzo.Scripts as Alonzo
 import qualified Cardano.Ledger.Alonzo.Tx as Alonzo
 import qualified Cardano.Ledger.Alonzo.TxBody as Alonzo
+import qualified Cardano.Ledger.Alonzo.TxInfo as Alonzo
 import qualified Cardano.Ledger.Alonzo.TxWitness as Alonzo
 
 import           Ouroboros.Consensus.Shelley.Eras (StandardAllegra, StandardAlonzo, StandardMary,
                    StandardShelley)
+
+import qualified Plutus.V1.Ledger.Api as Plutus
 
 import           Cardano.Api.Address
 import           Cardano.Api.Certificate
@@ -2980,3 +2986,41 @@ genesisUTxOPseudoTxIn nw (GenesisUTxOKeyHash kh) =
              (toShelleyNetwork nw)
              (Shelley.KeyHashObj kh)
              Shelley.StakeRefNull
+
+type Datum = ScriptData
+data ScriptArguments = TxInScriptArguments Datum ScriptRedeemer
+                     | MintingScriptArguments ScriptRedeemer
+                     | StakeScriptArguments ScriptRedeemer
+
+
+-- TODO: We need to be careful with Plutus script versions here
+-- as we have Plutus.V1.Ledger.Api, Plutus.V2.Ledger.Api modules
+-- which will correspond to us using different data types and functions.
+calculatePlutusScriptBudget
+  :: PlutusScript lang
+  -> PlutusScriptVersion lang
+  -> CostModel
+  -> ScriptArguments
+  -> [String]
+calculatePlutusScriptBudget (PlutusScriptSerialised pScript) _pVer cModel sArgs =
+  let scriptInputs = case sArgs of
+                       TxInScriptArguments datum redeemer -> [datum, redeemer]
+                       MintingScriptArguments redeemer -> [redeemer]
+                       StakeScriptArguments redeemer -> [redeemer]
+      Alonzo.CostModel costModelParams = toAlonzoCostModel cModel
+      -- We force failure to get the predicted cost to run the script
+      zeroBudget = Alonzo.transExUnits . toAlonzoExUnits $ ExecutionUnits 0 0
+      (logOutput, eExBudget) = Plutus.evaluateScriptRestricting
+                                 Plutus.Verbose
+                                 costModelParams
+                                 zeroBudget
+                                 pScript
+                                 (map toPlutusData scriptInputs)
+  in [ "Log Output"
+     , show logOutput
+     , "Either EvaluationError ExBudget"
+     , show eExBudget
+     ]
+
+     -- TODO: Left off here. Finish making this compile. Think about requiring ProtocolParameters
+     -- instead of CostModel

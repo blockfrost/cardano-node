@@ -96,7 +96,7 @@ module Cardano.Api.Shelley
     checkProtocolParameters,
     ProtocolParametersError(..),
 
-    -- * Scripts
+    -- * Simple scripts
     toShelleyScript,
     toShelleyMultiSig,
     fromShelleyMultiSig,
@@ -104,7 +104,10 @@ module Cardano.Api.Shelley
     fromAllegraTimelock,
     toShelleyScriptHash,
     fromShelleyScriptHash,
-    PlutusScript(..),
+
+    -- * Plutus scripts
+     PlutusScript(..),
+    calculatePlutusScriptBudget,
     toPlutusData,
     fromPlutusData,
     toAlonzoData,
@@ -115,6 +118,8 @@ module Cardano.Api.Shelley
     fromAlonzoExUnits,
     toAlonzoRdmrPtr,
     fromAlonzoRdmrPtr,
+
+    -- ** Plutus script JSON serialisation
     scriptDataFromJsonDetailedSchema,
     scriptDataToJsonDetailedSchema,
 
