@@ -22,6 +22,8 @@ module Cardano.Api.IPC (
     LocalNodeConnectInfo(..),
     localConsensusMode,
     LocalNodeClientProtocols(..),
+    LocalNodeClientParams(..),
+    mkLocalNodeClientParams,
     LocalChainSyncClient(..),
     LocalNodeClientProtocolsInMode,
 
@@ -137,10 +139,20 @@ data LocalNodeClientProtocols block point tip tx txerr query m =
          :: Maybe (LocalStateQueryClient   block point query m ())
      }
 
-data LocalChainSyncClient block point tip m
-  = NoLocalChainSyncClient
-  | LocalChainSyncClientPipelined (ChainSyncClientPipelined block point tip   m ())
-  | LocalChainSyncClient          (ChainSyncClient          block point tip   m ())
+data LocalChainSyncClient block point tip m where
+  NoLocalChainSyncClient :: LocalChainSyncClient block point tip m
+
+  LocalChainSyncClientPipelined
+    :: ChainSyncClientPipelined block point tip   m ()
+    -> LocalChainSyncClient block point tip m
+
+  LocalChainSyncClient
+    :: ChainSyncClient block point tip m ()
+    -> LocalChainSyncClient block point tip m
+
+  LocalChainSyncChairman
+    :: ChainSyncClient block point tip m ()
+    -> LocalChainSyncClient block point tip m
 
 -- public, exported
 type LocalNodeClientProtocolsInMode mode =
@@ -273,7 +285,11 @@ mkVersionedProtocols networkid ptcl unversionedClients =
                       nullTracer
                       cChainSyncCodec
                       (Net.SyncP.chainSyncClientPeerPipelined clientPipelined)
-
+              LocalChainSyncChairman client
+                -> Net.MuxPeer
+                      nullTracer
+                      cChainSyncCodec
+                      (Net.Sync.chainSyncClientPeer client)
         , localTxSubmissionProtocol =
             Net.InitiatorProtocolOnly $
               Net.MuxPeer
@@ -408,8 +424,8 @@ convLocalNodeClientProtocols
       localChainSyncClientForBlock    = case localChainSyncClient of
         NoLocalChainSyncClient -> NoLocalChainSyncClient
         LocalChainSyncClientPipelined clientPipelined -> LocalChainSyncClientPipelined $ convLocalChainSyncClientPipelined mode clientPipelined
-        LocalChainSyncClient client -> LocalChainSyncClient $ convLocalChainSyncClient mode client,
-
+        LocalChainSyncClient client -> LocalChainSyncClient $ convLocalChainSyncClient mode client
+        LocalChainSyncChairman client -> LocalChainSyncClient $ convLocalChainSyncClient mode client,
       localTxSubmissionClientForBlock = convLocalTxSubmissionClient mode <$>
                                           localTxSubmissionClient,
 
@@ -469,7 +485,6 @@ convLocalStateQueryClient mode =
       (toConsensusPointInMode mode)
       toConsensusQuery
       fromConsensusQueryResult
-
 
 -- ----------------------------------------------------------------------------
 -- Wrappers for specific protocol use-cases
