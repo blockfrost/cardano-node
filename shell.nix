@@ -24,6 +24,7 @@ let
   inherit (pkgs) customConfig;
   inherit (customConfig) withHoogle localCluster;
   inherit (localCluster) autoStartCluster profileName workbenchDevMode;
+  inherit (pkgs.haskell-nix) haskellLib;
   commandHelp =
     ''
       echo "
@@ -59,7 +60,7 @@ let
 
     inherit withHoogle;
 
-    packages = lib.attrVals cardanoNodeProject.projectPackages;
+    packages = ps: builtins.attrValues (haskellLib.selectProjectPackages ps);
 
     tools = {
       haskell-language-server = {
@@ -204,29 +205,7 @@ let
     '';
   };
 
-  dev = cardanoNodeProject.shellFor {
-    name = "cabal-dev-shell";
-
-    packages = ps: lib.attrValues (haskell-nix.haskellLib.selectProjectPackages ps);
-
-    # These programs will be available inside the nix-shell.
-    nativeBuildInputs = [
-      nix-prefetch-git
-      pkg-config
-      hlint
-      ghcid
-      haskell-language-server
-      cabalWrapped
-      # we also add cabal (even if cabalWrapped will be used by default) for shell completion:
-      cabal
-    ];
-
-    # Prevents cabal from choosing alternate plans, so that
-    # *all* dependencies are provided by Nix.
-    exactDeps = true;
-
-    inherit withHoogle;
-  };
+  dev = cardanoNodeProject.shell;
 
 in
 

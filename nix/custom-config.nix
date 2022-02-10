@@ -10,4 +10,6 @@ self: {
     workbenchDevMode = false;
     extraSupervisorConfig = {};
   };
+  # optional extra haskell.nix module
+  haskellNix = {};
 }

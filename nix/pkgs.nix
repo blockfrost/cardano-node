@@ -1,53 +1,45 @@
 # our packages overlay
-final: prev: with final;
-  let
-    compiler-nix-name = config.haskellNix.compiler or "ghc8105";
-  in {
-  cardanoNodeProject = import ./haskell.nix {
-    name = "cardano-node";
-    inherit compiler-nix-name
-      lib
-      haskell-nix
-      buildPackages
-      gitrev
-      ;
-  };
+final: prev: with final; {
+  cardanoNodeProject = (import ./haskell.nix {
+    inherit haskell-nix gitrev;
+  }).appendModule customConfig.haskellNix;
+  inherit (cardanoNodeProject.args) compiler-nix-name;
+
+  # The is used by nix/regenerate.sh to pre-compute package list to avoid double evaluation.
+  projectPackages = lib.genAttrs
+    (lib.attrNames (haskell-nix.haskellLib.selectProjectPackages
+      cardanoNodeProject.hsPkgs))
+    (name: lib.attrNames cardanoNodeProject.pkg-set.options.packages.value.${name}.components.exes);
+
   cardanoNodeHaskellPackages = cardanoNodeProject.hsPkgs;
-  cardanoNodeProfiledHaskellPackages = (import ./haskell.nix {
-    name = "cardano-node";
-    inherit compiler-nix-name
-      lib
-      haskell-nix
-      buildPackages
-      gitrev
-      ;
-    profiling = true;
+  cardanoNodeProfiledHaskellPackages = (cardanoNodeProject.appendModule {
+    modules = [{
+      enableLibraryProfiling = true;
+      packages.cardano-node.components.exes.cardano-node.enableProfiling = true;
+      packages.tx-generator.components.exes.tx-generator.enableProfiling = true;
+      packages.locli.components.exes.locli.enableProfiling = true;
+    }];
   }).hsPkgs;
-  cardanoNodeEventlogHaskellPackages = (import ./haskell.nix {
-    name = "cardano-node";
-    inherit compiler-nix-name
-      lib
-      haskell-nix
-      buildPackages
-      gitrev
-      ;
-    eventlog = true;
-  }).hsPkgs;
-  cardanoNodeAssertedHaskellPackages = (import ./haskell.nix {
-    inherit compiler-nix-name
-      lib
-      haskell-nix
-      buildPackages
-      gitrev
-      ;
-    assertedPackages = [
-      "ouroboros-consensus"
-      "ouroboros-consensus-cardano"
-      "ouroboros-consensus-byron"
-      "ouroboros-consensus-shelley"
-      "ouroboros-network"
-      "network-mux"
-    ];
+  cardanoNodeProfiledProject = cardanoNodeProject.appendModule
+    {
+      modules = [{
+        packages = lib.genAttrs [ "cardano-node" ]
+          (name: { configureFlags = [ "--ghc-option=-eventlog" ]; });
+      }];
+    };
+  cardanoNodeEventlogHaskellPackages = cardanoNodeProfiledProject.hsPkgs;
+  cardanoNodeAssertedHaskellPackages = (cardanoNodeProject.appendModule {
+    modules = [{
+      packages = lib.genAttrs [
+        "ouroboros-consensus"
+        "ouroboros-consensus-cardano"
+        "ouroboros-consensus-byron"
+        "ouroboros-consensus-shelley"
+        "ouroboros-network"
+        "network-mux"
+      ]
+        (name: { flags.asserts = true; });
+    }];
   }).hsPkgs;
 
   #Grab the executable component of our package.
@@ -96,39 +88,43 @@ final: prev: with final;
     inherit (cardanoNodeProject) index-state;
   };
 
-  cardanolib-py = callPackage ./cardanolib-py {};
+  cardanolib-py = callPackage ./cardanolib-py { };
 
   scripts = lib.recursiveUpdate (import ./scripts.nix { inherit pkgs; })
     (import ./scripts-submit-api.nix { inherit pkgs; });
 
-  dockerImage = let
-    defaultConfig = {
-      stateDir = "/data";
-      dbPrefix = "db";
-      socketPath = "/ipc/node.socket";
+  dockerImage =
+    let
+      defaultConfig = {
+        stateDir = "/data";
+        dbPrefix = "db";
+        socketPath = "/ipc/node.socket";
+      };
+    in
+    callPackage ./docker {
+      exe = "cardano-node";
+      scripts = import ./scripts.nix {
+        inherit pkgs;
+        customConfigs = [ defaultConfig customConfig ];
+      };
+      script = "node";
     };
-  in callPackage ./docker {
-    exe = "cardano-node";
-    scripts = import ./scripts.nix {
-      inherit pkgs;
-      customConfigs = [ defaultConfig customConfig ];
-    };
-    script = "node";
-  };
 
-  submitApiDockerImage = let
-    defaultConfig = {
-      socketPath = "/node-ipc/node.socket";
-      listenAddress = "0.0.0.0";
+  submitApiDockerImage =
+    let
+      defaultConfig = {
+        socketPath = "/node-ipc/node.socket";
+        listenAddress = "0.0.0.0";
+      };
+    in
+    callPackage ./docker/submit-api.nix {
+      exe = "cardano-submit-api";
+      scripts = import ./scripts-submit-api.nix {
+        inherit pkgs;
+        customConfigs = [ defaultConfig customConfig ];
+      };
+      script = "submit-api";
     };
-  in callPackage ./docker/submit-api.nix {
-    exe = "cardano-submit-api";
-    scripts = import ./scripts-submit-api.nix {
-      inherit pkgs;
-      customConfigs = [ defaultConfig customConfig ];
-    };
-    script = "submit-api";
-  };
 
   # NixOS tests run a node and submit-api and validate it listens
   nixosTests = import ./nixos/tests {

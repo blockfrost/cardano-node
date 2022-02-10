@@ -81,7 +81,7 @@ let
       tests = collectChecks haskellPackages;
 
       hlint = callPackage hlintCheck {
-        inherit (cardanoNodeProject) src;
+        inherit (cardanoNodeProject.args) src;
       };
     };
 

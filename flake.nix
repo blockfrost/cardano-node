@@ -36,9 +36,11 @@
       inherit (lib) head systems mapAttrs recursiveUpdate mkDefault
         getAttrs optionalAttrs nameValuePair attrNames;
       inherit (utils.lib) eachSystem mkApp flattenTree;
-      inherit (iohkNix.lib) prefixNamesWith collectExes;
+      inherit (iohkNix.lib) prefixNamesWith;
+      removeRecurse = lib.filterAttrsRecursive (n: _: n != "recurseForDerivations");
+      flatten = attrs: lib.foldl' (acc: a: if (lib.isAttrs a) then acc // (removeAttrs a [ "recurseForDerivations" ]) else acc) { } (lib.attrValues attrs);
 
-      supportedSystems = import ./supported-systems.nix;
+      supportedSystems = import ./nix/supported-systems.nix;
       defaultSystem = head supportedSystems;
 
       overlays = [
@@ -51,7 +53,7 @@
           customConfig = recursiveUpdate
             (import ./nix/custom-config.nix final.customConfig)
             customConfig.outputs;
-          gitrev = self.rev or "dirty";
+          gitrev = self.rev or "0000000000000000000000000000000000000000";
           commonLib = lib
             // iohkNix.lib
             // final.cardanoLib
@@ -60,92 +62,115 @@
         (import ./nix/pkgs.nix)
       ];
 
-    in eachSystem supportedSystems (system:
-      let
-        pkgs = import nixpkgs {
-          inherit system overlays;
-          inherit (haskellNix) config;
-        };
+    in
+    eachSystem supportedSystems
+      (system:
+        let
+          pkgs = import nixpkgs {
+            inherit system overlays;
+            inherit (haskellNix) config;
+          };
+          inherit (pkgs.haskell-nix) haskellLib;
+          inherit (haskellLib) collectChecks' collectComponents';
+          inherit (pkgs.commonLib) eachEnv environments;
 
-        inherit (pkgs.commonLib) eachEnv environments;
+          project = pkgs.cardanoNodeProject;
+          projectPackages = haskellLib.selectProjectPackages project.hsPkgs;
 
-        devShell = (import ./shell.nix { inherit pkgs; }).dev;
+          shell = import ./shell.nix { inherit pkgs; };
+          devShells = {
+            inherit (shell) devops;
+            cluster = shell;
+            profiled = pkgs.cardanoNodeProfiledProject.shell;
+          };
 
-        flake = pkgs.cardanoNodeProject.flake {
-          crossPlatforms = p: with p; [
-            mingwW64
-            musl64
-          ];
-        };
+          devShell = shell.dev;
 
-        scripts = flattenTree pkgs.scripts;
-
-        checks =
+          checks = flattenTree (collectChecks' projectPackages) //
           # Linux only checks:
-          optionalAttrs (system == "x86_64-linux") (
+          (optionalAttrs (system == "x86_64-linux") (
             prefixNamesWith "nixosTests/" (mapAttrs (_: v: v.${system} or v) pkgs.nixosTests)
-          )
+          ))
           # checks run on default system only;
-          // optionalAttrs (system == defaultSystem) {
+          // (optionalAttrs (system == defaultSystem) {
             hlint = pkgs.callPackage pkgs.hlintCheck {
-              inherit (pkgs.cardanoNodeProject.projectModule) src;
+              inherit (project.args) src;
+            };
+          });
+
+          exes = flatten (collectComponents' "exes" projectPackages) // {
+            inherit (pkgs) cardano-node-profiled cardano-node-eventlogged cardano-node-asserted tx-generator-profiled locli-profiled db-analyser cardano-ping db-converter;
+          } // (flattenTree (pkgs.scripts // {
+            # `tests` are the test suites which have been built.
+            tests = collectComponents' "tests" projectPackages;
+            # `benchmarks` (only built, not run).
+            benchmarks = collectComponents' "benchmarks" projectPackages;
+          }));
+
+          packages = exes
+          # Linux only packages:
+          // optionalAttrs (system == "x86_64-linux") {
+            "dockerImage/node" = pkgs.dockerImage;
+            "dockerImage/submit-api" = pkgs.submitApiDockerImage;
+            membenches = membench.outputs.packages.x86_64-linux.batch-report;
+            snapshot = membench.outputs.packages.x86_64-linux.snapshot;
+          }
+          # Add checks to be able to build them individually
+          // (prefixNamesWith "checks/" checks);
+
+          apps = lib.mapAttrs (n: p: { type = "app"; program = p.exePath or "${p}/bin/${p.name or n}"; }) exes;
+
+        in
+        {
+
+          inherit environments packages checks apps;
+
+          legacyPackages = pkgs;
+
+          # Built by `nix build .`
+          defaultPackage = packages.cardano-node;
+
+          # Run by `nix run .`
+          defaultApp = apps.cardano-node;
+
+          # This is used by `nix develop .` to open a devShell
+          inherit devShell devShells;
+
+          hydraJobs = optionalAttrs (system == "x86_64-linux")
+            {
+              linux = {
+                native = packages // {
+                  internal.roots.project = project.roots;
+                };
+                musl =
+                  let
+                    muslProject = project.projectCross.musl64;
+                    projectPackages = haskellLib.selectProjectPackages muslProject.hsPkgs;
+                  in
+                  flatten (collectComponents' "exes" projectPackages) // {
+                    internal.roots.project = muslProject.roots;
+                  };
+                windows =
+                  let
+                    windowsProject = project.projectCross.mingwW64;
+                    projectPackages = haskellLib.selectProjectPackages windowsProject.hsPkgs;
+                  in
+                  flatten (collectComponents' "exes" projectPackages)
+                  // (removeRecurse {
+                    checks = collectChecks' projectPackages;
+                    tests = collectComponents' "tests" projectPackages;
+                    benchmarks = collectComponents' "benchmarks" projectPackages;
+                    internal.roots.project = windowsProject.roots;
+                  });
+              };
+            } // optionalAttrs (system == "x86_64-darwin") {
+            macos = packages // {
+              internal.roots.project = project.roots;
             };
           };
-
-        exes = collectExes
-           flake.packages;
-
-
-        packages = {
-          inherit (devShell) devops;
-          inherit (pkgs) cardano-node-profiled cardano-node-eventlogged cardano-node-asserted tx-generator-profiled locli-profiled db-analyser;
         }
-        // scripts
-        // exes
-        # Linux only packages:
-        // optionalAttrs (system == "x86_64-linux") {
-          "dockerImage/node" = pkgs.dockerImage;
-          "dockerImage/submit-api" = pkgs.submitApiDockerImage;
-        }
-
-        # Add checks to be able to build them individually
-        // (prefixNamesWith "checks/" checks);
-
-      in recursiveUpdate flake {
-
-        inherit environments packages checks;
-
-        legacyPackages = pkgs;
-
-        # Built by `nix build .`
-        defaultPackage = flake.packages."cardano-node:exe:cardano-node";
-
-        # Run by `nix run .`
-        defaultApp = flake.apps."cardano-node:exe:cardano-node";
-
-        # This is used by `nix develop .` to open a devShell
-        inherit devShell;
-
-        apps = {
-          repl = mkApp {
-            drv = pkgs.writeShellScriptBin "repl" ''
-              confnix=$(mktemp)
-              echo "builtins.getFlake (toString $(git rev-parse --show-toplevel))" >$confnix
-              trap "rm $confnix" EXIT
-              nix repl $confnix
-          '';
-          };
-          cardano-ping = { type = "app"; program = pkgs.cardano-ping.exePath; };
-        }
-        # nix run .#<exe>
-        // (collectExes flake.apps);
-      }
-    ) // {
+      ) // {
       overlay = import ./overlay.nix self;
-      hydraJobs.x86_64-linux = {
-        membenches = membench.outputs.packages.x86_64-linux.batch-report;
-        snapshot = membench.outputs.packages.x86_64-linux.snapshot;
-      };
       nixosModules = {
         cardano-node = { pkgs, lib, ... }: {
           imports = [ ./nix/nixos/cardano-node-service.nix ];
